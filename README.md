@@ -4,8 +4,7 @@ Pytorch based implementation of VoxelNet: End-to-End Learning for Point Cloud Ba
 ## Architecture
 
 <p align='center'>
-<img src='imgs/pfa.png'>
-<img src='imgs/psp.png'>
+<img src='imgs/va.png'>
 </p>
 
 # Dependencies
