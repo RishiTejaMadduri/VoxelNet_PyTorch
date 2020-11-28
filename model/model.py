@@ -15,15 +15,16 @@ import torch.nn.functional as F
 
 # In[3]:
 
+sys.path.append('/home/rishi/Projects/VoxelNet/VoxelNet_R_PyTorch/')
 
-from group_pointcloud import FeatureNet
-from rpn import MiddleAndRpn
+from model.group_pointcloud import FeatureNet
+from model.rpn import MiddleAndRpn
 
 
 # In[4]:
 
 
-sys.path.append('/home/rishi/Projects/VoxelNet/VoxelNet_R_PyTorch/')
+
 
 
 # In[5]:

@@ -34,7 +34,7 @@ class VFELayer(nn.Module):
         self.out_channels = out_channels
         self.units = int(out_channels/2)
         
-        self.dense = nn.Sequential(nn.Linear(self.in_channels, self.out_channels),
+        self.dense = nn.Sequential(nn.Linear(self.in_channels, self.units),
                                    nn.ReLU()
                                    )
         self.batch_norm = nn.BatchNorm2d(self.units)
