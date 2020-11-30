@@ -27,7 +27,7 @@ import pyximport
 pyximport.install()
 
 from config import cfg
-# from utils.utils import box3d_to_label
+from utils.utils import box3d_to_label
 from model.model import RPN3D
 from dataloader.kitti import KITTI_Loader as Dataset
 from dataloader.kitti import collate_fn
