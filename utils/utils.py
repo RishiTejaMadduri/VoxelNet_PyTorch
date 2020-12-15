@@ -5,7 +5,7 @@ import cv2
 cv2.setNumThreads(0)
 
 import math
-
+import numpy as np
 import pyximport
 pyximport.install()
 

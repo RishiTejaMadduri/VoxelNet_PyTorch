@@ -64,7 +64,7 @@
         "save_dir": "/mnt/batch/tasks/shared/LS_root/mounts/clusters/pyfuse/code/pytorch_segmentation/saved/",
         "save_period": 10,
   
-        "monitor": "avg_val_loss",
+        "monitor": "min_loss",
         "early_stop": 10,
         
         "tensorboard": true,

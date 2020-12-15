@@ -15,12 +15,12 @@ __C = edict()
 cfg = __C
 
 # For dataset dir
-__C.DATA_DIR = './data/MD_KITTI'
+__C.DATA_DIR = './data/KITTI/'
 __C.CALIB_DIR = './data/KITTI/calib/training/calib'
 
 
 # For gpu allocation
-__C.GPU_AVAILABLE = '0'
+__C.GPU_AVAILABLE = '1'
 __C.GPU_USE_COUNT = len(__C.GPU_AVAILABLE.split(','))
 __C.GPU_MEMORY_FRACTION = 1
 

@@ -1,0 +1,1 @@
+/opt/conda/lib/python3.7/site-packages/numpy/core/include/numpy
