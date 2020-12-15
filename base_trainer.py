@@ -1,229 +1,197 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import os\n",
-    "import sys\n",
-    "sys.path.append('/mnt/batch/tasks/shared/LS_root/mounts/clusters/objloc/code/pyramid-fuse/')\n",
-    "import logging\n",
-    "import json\n",
-    "import math\n",
-    "import torch\n",
-    "import datetime\n",
-    "from torch.utils import tensorboard\n",
-    "from utils_seg import logger\n",
-    "import utils_seg.lr_scheduler"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 1,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "def get_instance(module, name, config, *args):\n",
-    "    # GET THE CORRESPONDING CLASS / FCT \n",
-    "    return getattr(module, config[name]['type'])(*args, **config[name]['args'])"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "class BaseTrainer:\n",
-    "    def __init__(self, model, resume, config, train_loader, val_loader=None, train_logger=None):\n",
-    "        self.model = model\n",
-    "        self.config = config\n",
-    "        self.train_loader = train_loader\n",
-    "        self.val_loader = val_loader\n",
-    "        self.train_logger = train_logger\n",
-    "        self.logger = logging.getLogger(self.__class__.__name__)\n",
-    "        self.do_validation = self.config['trainer']['val']\n",
-    "        self.start_epoch = 1\n",
-    "        self.improved = False\n",
-    "        min_loss = sys.float_info.max\n",
-    "        # SETTING THE DEVICE\n",
-    "        self.device, availble_gpus = self._get_available_devices(self.config['n_gpu'])\n",
-    "        self.model = torch.nn.DataParallel(self.model, device_ids=availble_gpus)\n",
-    "        self.model.to(self.device)\n",
-    "\n",
-    "        # CONFIGS\n",
-    "        cfg_trainer = self.config['trainer']\n",
-    "        self.epochs = cfg_trainer['epochs']\n",
-    "        self.save_period = cfg_trainer['save_period']\n",
-    "\n",
-    "        # OPTIMIZER\n",
-    "        optim_params = [\n",
-    "            {'params': model.parameters(), 'lr': self.config['optimizer']['args']['lr']},\n",
-    "            ]\n",
-    "\n",
-    "        self.optimizer = torch.optim.Adam(optim_params,\n",
-    "                                 betas=(self.config['optimizer']['args']['momentum'], 0.99),\n",
-    "                                 weight_decay=self.config['optimizer']['args']['weight_decay'])\n",
-    "        self.lr_scheduler = getattr(utils_seg.lr_scheduler, config['lr_scheduler']['type'])(self.optimizer, self.epochs, len(train_loader))\n",
-    "\n",
-    "        # MONITORING\n",
-    "        self.monitor = cfg_trainer.get('monitor', 'off')\n",
-    "        if self.monitor == 'off':\n",
-    "            self.mnt_mode = 'off'\n",
-    "            self.mnt_best = 0\n",
-    "        else:\n",
-    "            self.mnt_mode, self.mnt_metric = self.monitor.split()\n",
-    "            assert self.mnt_mode in ['min', 'max']\n",
-    "            self.mnt_best = -math.inf if self.mnt_mode == 'max' else math.inf\n",
-    "            self.early_stoping = cfg_trainer.get('early_stop', math.inf)\n",
-    "\n",
-    "        # CHECKPOINTS & TENSOBOARD\n",
-    "        start_time = datetime.datetime.now().strftime('%m-%d_%H-%M')\n",
-    "        self.checkpoint_dir = os.path.join(cfg_trainer['save_dir'], self.config['name'], start_time)\n",
-    "        helpers.dir_exists(self.checkpoint_dir)\n",
-    "        config_save_path = os.path.join(self.checkpoint_dir, 'config.json')\n",
-    "        with open(config_save_path, 'w') as handle:\n",
-    "            json.dump(self.config, handle, indent=4, sort_keys=True)\n",
-    "            \n",
-    "        writepath = \"change_this\"\n",
-    "        writer_dir = str(writepath + '/' + self.config['name'] + '/' + start_time)\n",
-    "        print(writer_dir)\n",
-    "#         writer_dir = os.path.join(cfg_trainer['log_dir'], self.config['name'], start_time)\n",
-    "        if os.path.isdir(writer_dir):\n",
-    "            self.writer = tensorboard.SummaryWriter(writer_dir)\n",
-    "        else:\n",
-    "            print(\"set logdir properly\")\n",
-    "            print(writer_dir)\n",
-    "            exit()\n",
-    "#         import pdb; pdb.set_trace()\n",
-    "        self.writer = tensorboard.SummaryWriter(writer_dir)\n",
-    "\n",
-    "        if resume: self._resume_checkpoint(resume)\n",
-    "\n",
-    "    def _get_available_devices(self, n_gpu):\n",
-    "        sys_gpu = torch.cuda.device_count()\n",
-    "        if sys_gpu == 0:\n",
-    "            self.logger.warning('No GPUs detected, using the CPU')\n",
-    "            n_gpu = 0\n",
-    "        elif n_gpu > sys_gpu:\n",
-    "            self.logger.warning(f'Nbr of GPU requested is {n_gpu} but only {sys_gpu} are available')\n",
-    "            n_gpu = sys_gpu\n",
-    "            \n",
-    "        device = torch.device('cuda:0' if n_gpu > 0 else 'cpu')\n",
-    "        self.logger.info(f'Detected GPUs: {sys_gpu} Requested: {n_gpu}')\n",
-    "        available_gpus = list(range(n_gpu))\n",
-    "        return device, available_gpus\n",
-    "    \n",
-    "    def train(self):\n",
-    "        for epoch in range(self.start_epoch, self.epochs+1):\n",
-    "            # RUN TRAIN (AND VAL)\n",
-    "            results = self._train_epoch(epoch)\n",
-    "            \n",
-    "            if self.do_validation and epoch % self.config['trainer']['val_per_epochs'] == 0:\n",
-    "                results, tot_val_loss, tot_val_times = self._valid_epoch(epoch)\n",
-    "                avg_val_loss = tot_val_loss / float(tot_val_times)\n",
-    "                min_loss = min(avg_val_loss, min_loss)\n",
-    "                # LOGGING INFO\n",
-    "                self.logger.info(f'\\n ## Info for epoch {epoch} ## ')\n",
-    "                for k, v in results.items():\n",
-    "                    self.logger.info(f'{str(k):15s}: {v}')\n",
-    "            \n",
-    "            if self.train_logger is not None:\n",
-    "                log = {'epoch' : epoch, **results}\n",
-    "                self.train_logger.add_entry(log)\n",
-    "\n",
-    "            # CHECKING IF THIS IS THE BEST MODEL (ONLY FOR VAL)\n",
-    "            if self.mnt_mode != 'off' and epoch % self.config['trainer']['val_per_epochs'] == 0:\n",
-    "                try:\n",
-    "                    if self.mnt_mode == 'min': self.improved = (log[self.mnt_metric] < self.mnt_best)\n",
-    "                    else: self.improved = (log[self.mnt_metric] > self.mnt_best)\n",
-    "                except KeyError:\n",
-    "                    self.logger.warning(f'The metrics being tracked ({self.mnt_metric}) has not been calculated. Training stops.')\n",
-    "                    break\n",
-    "                    \n",
-    "                if self.improved:\n",
-    "                    self.mnt_best = log[self.mnt_metric]\n",
-    "                    self.not_improved_count = 0\n",
-    "                else:\n",
-    "                    self.not_improved_count += 1\n",
-    "\n",
-    "                if self.not_improved_count > self.early_stoping:\n",
-    "                    self.logger.info(f'\\nPerformance didn\\'t improve for {self.early_stoping} epochs')\n",
-    "                    self.logger.warning('Training Stoped')\n",
-    "                    break\n",
-    "\n",
-    "            # SAVE CHECKPOINT\n",
-    "            if epoch % self.save_period == 0:\n",
-    "                self._save_checkpoint(epoch, save_best=self.improved)\n",
-    "\n",
-    "    def _save_checkpoint(self, epoch, save_best=False):\n",
-    "        state = {\n",
-    "            'epoch': epoch,\n",
-    "            'state_dict': self.model.state_dict(),\n",
-    "            'min_loss': min_loss\n",
-    "            'optimizer': self.optimizer.state_dict(),\n",
-    "            'monitor_best': self.mnt_best,\n",
-    "            'config': self.config\n",
-    "        }\n",
-    "        filename = os.path.join(self.checkpoint_dir, f'checkpoint-epoch{epoch}.pth')\n",
-    "        self.logger.info(f'\\nSaving a checkpoint: {filename} ...') \n",
-    "        torch.save(state, filename)\n",
-    "\n",
-    "        if save_best:\n",
-    "            filename = os.path.join(self.checkpoint_dir, f'best_model.pth')\n",
-    "            torch.save(state, filename)\n",
-    "            self.logger.info(\"Saving current best: best_model.pth\")\n",
-    "\n",
-    "    def _resume_checkpoint(self, resume_path):\n",
-    "        self.logger.info(f'Loading checkpoint : {resume_path}')\n",
-    "        checkpoint = torch.load(resume_path)\n",
-    "\n",
-    "        # Load last run info, the model params, the optimizer and the loggers\n",
-    "        self.start_epoch = checkpoint['epoch']\n",
-    "        self.mnt_best = checkpoint['monitor_best']\n",
-    "        self.not_improved_count = 0\n",
-    "        min_loss = checkpoint['min_loss']\n",
-    "\n",
-    "        self.model.load_state_dict(checkpoint['state_dict'])\n",
-    "        self.optimizer.load_state_dict(checkpoint['optimizer'])\n",
-    "        if self.lr_scheduler:\n",
-    "            self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])\n",
-    "\n",
-    "        self.train_logger = checkpoint['logger']\n",
-    "        self.logger.info(f'Checkpoint <{resume_path}> (epoch {self.start_epoch}) was loaded')\n",
-    "\n",
-    "    def _train_epoch(self, epoch):\n",
-    "        raise NotImplementedError\n",
-    "\n",
-    "    def _valid_epoch(self, epoch):\n",
-    "        raise NotImplementedError\n",
-    "\n",
-    "    def _eval_metrics(self, output, target):\n",
-    "        raise NotImplementedError"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.7.8"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 4
-}
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[ ]:
+
+
+import os
+import sys
+sys.path.append('/mnt/batch/tasks/shared/LS_root/mounts/clusters/objloc/code/pyramid-fuse/')
+import logging
+import json
+import math
+import torch
+import datetime
+from torch.utils import tensorboard
+from utils_seg import logger
+import utils_seg.lr_scheduler
+
+
+# In[1]:
+
+
+def get_instance(module, name, config, *args):
+    # GET THE CORRESPONDING CLASS / FCT 
+    return getattr(module, config[name]['type'])(*args, **config[name]['args'])
+
+
+# In[ ]:
+
+
+class BaseTrainer:
+    def __init__(self, model, resume, config, train_loader, val_loader=None, train_logger=None):
+        self.model = model
+        self.config = config
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.train_logger = train_logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.do_validation = self.config['trainer']['val']
+        self.start_epoch = 1
+        self.improved = False
+        min_loss = sys.float_info.max
+        # SETTING THE DEVICE
+        self.device, availble_gpus = self._get_available_devices(self.config['n_gpu'])
+        self.model = torch.nn.DataParallel(self.model, device_ids=availble_gpus)
+        self.model.to(self.device)
+
+        # CONFIGS
+        cfg_trainer = self.config['trainer']
+        self.epochs = cfg_trainer['epochs']
+        self.save_period = cfg_trainer['save_period']
+
+        # OPTIMIZER
+        optim_params = [
+            {'params': model.parameters(), 'lr': self.config['optimizer']['args']['lr']},
+            ]
+
+        self.optimizer = torch.optim.Adam(optim_params,
+                                 betas=(self.config['optimizer']['args']['momentum'], 0.99),
+                                 weight_decay=self.config['optimizer']['args']['weight_decay'])
+        self.lr_scheduler = getattr(utils_seg.lr_scheduler, config['lr_scheduler']['type'])(self.optimizer, self.epochs, len(train_loader))
+
+        # MONITORING
+        self.monitor = cfg_trainer.get('monitor', 'off')
+        if self.monitor == 'off':
+            self.mnt_mode = 'off'
+            self.mnt_best = 0
+        else:
+            self.mnt_mode, self.mnt_metric = self.monitor.split()
+            assert self.mnt_mode in ['min', 'max']
+            self.mnt_best = -math.inf if self.mnt_mode == 'max' else math.inf
+            self.early_stoping = cfg_trainer.get('early_stop', math.inf)
+
+        # CHECKPOINTS & TENSOBOARD
+        start_time = datetime.datetime.now().strftime('%m-%d_%H-%M')
+        self.checkpoint_dir = os.path.join(cfg_trainer['save_dir'], self.config['name'], start_time)
+        helpers.dir_exists(self.checkpoint_dir)
+        config_save_path = os.path.join(self.checkpoint_dir, 'config.json')
+        with open(config_save_path, 'w') as handle:
+            json.dump(self.config, handle, indent=4, sort_keys=True)
+            
+        writepath = "change_this"
+        writer_dir = str(writepath + '/' + self.config['name'] + '/' + start_time)
+        print(writer_dir)
+#         writer_dir = os.path.join(cfg_trainer['log_dir'], self.config['name'], start_time)
+        if os.path.isdir(writer_dir):
+            self.writer = tensorboard.SummaryWriter(writer_dir)
+        else:
+            print("set logdir properly")
+            print(writer_dir)
+            exit()
+#         import pdb; pdb.set_trace()
+        self.writer = tensorboard.SummaryWriter(writer_dir)
+
+        if resume: self._resume_checkpoint(resume)
+
+    def _get_available_devices(self, n_gpu):
+        sys_gpu = torch.cuda.device_count()
+        if sys_gpu == 0:
+            self.logger.warning('No GPUs detected, using the CPU')
+            n_gpu = 0
+        elif n_gpu > sys_gpu:
+            self.logger.warning(f'Nbr of GPU requested is {n_gpu} but only {sys_gpu} are available')
+            n_gpu = sys_gpu
+            
+        device = torch.device('cuda:0' if n_gpu > 0 else 'cpu')
+        self.logger.info(f'Detected GPUs: {sys_gpu} Requested: {n_gpu}')
+        available_gpus = list(range(n_gpu))
+        return device, available_gpus
+    
+    def train(self):
+        for epoch in range(self.start_epoch, self.epochs+1):
+            # RUN TRAIN (AND VAL)
+            results = self._train_epoch(epoch)
+            
+            if self.do_validation and epoch % self.config['trainer']['val_per_epochs'] == 0:
+                results, tot_val_loss, tot_val_times = self._valid_epoch(epoch)
+                avg_val_loss = tot_val_loss / float(tot_val_times)
+                min_loss = min(avg_val_loss, min_loss)
+                # LOGGING INFO
+                self.logger.info(f'\n ## Info for epoch {epoch} ## ')
+                for k, v in results.items():
+                    self.logger.info(f'{str(k):15s}: {v}')
+            
+            if self.train_logger is not None:
+                log = {'epoch' : epoch, **results}
+                self.train_logger.add_entry(log)
+
+            # CHECKING IF THIS IS THE BEST MODEL (ONLY FOR VAL)
+            if self.mnt_mode != 'off' and epoch % self.config['trainer']['val_per_epochs'] == 0:
+                try:
+                    if self.mnt_mode == 'min': self.improved = (log[self.mnt_metric] < self.mnt_best)
+                    else: self.improved = (log[self.mnt_metric] > self.mnt_best)
+                except KeyError:
+                    self.logger.warning(f'The metrics being tracked ({self.mnt_metric}) has not been calculated. Training stops.')
+                    break
+                    
+                if self.improved:
+                    self.mnt_best = log[self.mnt_metric]
+                    self.not_improved_count = 0
+                else:
+                    self.not_improved_count += 1
+
+                if self.not_improved_count > self.early_stoping:
+                    self.logger.info(f'\nPerformance didn\'t improve for {self.early_stoping} epochs')
+                    self.logger.warning('Training Stoped')
+                    break
+
+            # SAVE CHECKPOINT
+            if epoch % self.save_period == 0:
+                self._save_checkpoint(epoch, save_best=self.improved)
+
+    def _save_checkpoint(self, epoch, save_best=False):
+        state = {
+            'epoch': epoch,
+            'state_dict': self.model.state_dict(),
+            'min_loss': min_loss
+            'optimizer': self.optimizer.state_dict(),
+            'monitor_best': self.mnt_best,
+            'config': self.config
+        }
+        filename = os.path.join(self.checkpoint_dir, f'checkpoint-epoch{epoch}.pth')
+        self.logger.info(f'\nSaving a checkpoint: {filename} ...') 
+        torch.save(state, filename)
+
+        if save_best:
+            filename = os.path.join(self.checkpoint_dir, f'best_model.pth')
+            torch.save(state, filename)
+            self.logger.info("Saving current best: best_model.pth")
+
+    def _resume_checkpoint(self, resume_path):
+        self.logger.info(f'Loading checkpoint : {resume_path}')
+        checkpoint = torch.load(resume_path)
+
+        # Load last run info, the model params, the optimizer and the loggers
+        self.start_epoch = checkpoint['epoch']
+        self.mnt_best = checkpoint['monitor_best']
+        self.not_improved_count = 0
+        min_loss = checkpoint['min_loss']
+
+        self.model.load_state_dict(checkpoint['state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if self.lr_scheduler:
+            self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+
+        self.train_logger = checkpoint['logger']
+        self.logger.info(f'Checkpoint <{resume_path}> (epoch {self.start_epoch}) was loaded')
+
+    def _train_epoch(self, epoch):
+        raise NotImplementedError
+
+    def _valid_epoch(self, epoch):
+        raise NotImplementedError
+
+    def _eval_metrics(self, output, target):
+        raise NotImplementedError
+

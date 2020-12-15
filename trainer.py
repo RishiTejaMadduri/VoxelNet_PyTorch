@@ -1,176 +1,147 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import torch\n",
-    "import time\n",
-    "import numpy as np\n",
-    "from torchvision.utils import make_grid\n",
-    "from torchvision import transforms\n",
-    "from base_trainer import *\n",
-    "from tqdm import tqdm"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "class Trainer(BaseTrainer):\n",
-    "    def __init__(self, model, resume, config, train_loader, val_loader=None, train_logger=None):\n",
-    "        super(Trainer, self).__init__(model, resume, config, train_loader, val_loader, train_logger)\n",
-    "        \n",
-    "        self.wrt_mode, self.wrt_step = 'train_', 0\n",
-    "        self.log_step = 10\n",
-    "        torch.backends.cudnn.benchmark = True\n",
-    "        \n",
-    "    def _train_epoch(self, epoch):\n",
-    "        self.logger.info('\\n')\n",
-    "            \n",
-    "        self.model.train()\n",
-    "        self.wrt_mode = 'train'\n",
-    "        \n",
-    "        tic = time.time()\n",
-    "#         self._reset_metrics()\n",
-    "\n",
-    "        tbar = tqdm(self.train_loader, ncols=130)\n",
-    "        for (i, data) in enumerate(tbar):\n",
-    "            \n",
-    "            self.optimizer.step()\n",
-    "            self.lr_scheduler.step(epoch=epoch-1)\n",
-    "            \n",
-    "            # LOSS & OPTIMIZE\n",
-    "            self.optimizer.zero_grad()\n",
-    "            prob_output, delta_output, loss, cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec = self.model(data)\n",
-    "            forward_time = time.time() - start_time\n",
-    "            if isinstance(self.loss, torch.nn.DataParallel):\n",
-    "                loss = loss.mean()\n",
-    "                \n",
-    "            self.optimizer.step()\n",
-    "            loss.backward()\n",
-    "            self.total_loss.update(loss.item())\n",
-    "\n",
-    "            # measure elapsed time\n",
-    "            self.batch_time.update(time.time() - tic)\n",
-    "            tic = time.time()\n",
-    "\n",
-    "            # LOGGING & TENSORBOARD\n",
-    "            if batch_idx % self.log_step == 0:\n",
-    "                self.wrt_step = (epoch - 1) * len(self.train_loader) + batch_idx\n",
-    "                self.writer.add_scalar(f'{self.wrt_mode}/loss', loss.item(), self.wrt_step)\n",
-    "\n",
-    "            \n",
-    "            # PRINT INFO\n",
-    "            tbar.set_description('TRAIN ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(\n",
-    "                                                epoch, loss, \n",
-    "                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec\n",
-    "                                                self.forward_time.average, self.batch_time.average))\n",
-    "\n",
-    "#         # METRICS TO TENSORBOARD\n",
-    "        self.writer.add_scalars(str(epoch+1), {'train/loss' : loss.item(),\n",
-    "                                                  'train/reg_loss' : reg_loss.item(),\n",
-    "                                                  'train/cls_loss' : cls_loss.item(),\n",
-    "                                                  'train/cls_pos_loss' : cls_pos_loss_rec.item(),\n",
-    "                                                  'train/cls_neg_loss' : cls_neg_loss_rec.item()\n",
-    "                                                 }\n",
-    "                                  )\n",
-    "\n",
-    "        # RETURN LOSS & METRICS\n",
-    "        log = {'loss': loss.average(),\n",
-    "               'cls_loss': cls_loss.average(),\n",
-    "               'reg_loss': reg_loss.average(),\n",
-    "               'cls_pos_loss': cls_pos_loss_rec.average(),\n",
-    "               'cls_neg_loss': cls_neg_loss_rec.average()\n",
-    "              }\n",
-    "\n",
-    "\n",
-    "        return log\n",
-    "\n",
-    "    def _valid_epoch(self, epoch):\n",
-    "        if self.val_loader is None:\n",
-    "            self.logger.warning('Not data loader was passed for the validation step, No validation is performed !')\n",
-    "            return {}\n",
-    "        self.logger.info('\\n###### EVALUATION ######')\n",
-    "\n",
-    "        self.model.eval()\n",
-    "        self.wrt_mode = 'val'\n",
-    "\n",
-    "        self._reset_metrics()\n",
-    "        tbar = tqdm(self.val_loader, ncols=130)\n",
-    "        \n",
-    "        with torch.no_grad():\n",
-    "            val_visual = []\n",
-    "            for (i, data) in enumerate(tbar):\n",
-    "                \n",
-    "                probs, deltas, val_loss, val_cls_loss, val_reg_loss, cls_pos_loss_rec, cls_neg_loss_rec = model(val_data)\n",
-    "\n",
-    "                if isinstance(self.loss, torch.nn.DataParallel):\n",
-    "                    loss = loss.mean()\n",
-    "\n",
-    "                # PRINT INFO\n",
-    "                tbar.set_description('EVAL ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(\n",
-    "                                                epoch, loss, \n",
-    "                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec\n",
-    "                                                self.forward_time.average, self.batch_time.average))\n",
-    "\n",
-    "            # WRTING & VISUALIZING THE MASKS\n",
-    "            tags, ret_box3d_scores, ret_summary = model.module.predict(val_data, probs, deltas, summary = True)\n",
-    "            for (tag, img) in ret_summary:\n",
-    "                            img = img[0].transpose(2, 0, 1)\n",
-    "                            self.writer.add_image(tag, img, global_counter)\n",
-    "                        \n",
-    "\n",
-    "            # METRICS TO TENSORBOARD\n",
-    "            self.writer.add_scalars(str(epoch+1), {'train/loss' : loss.item(),\n",
-    "                                                  'train/reg_loss' : reg_loss.item(),\n",
-    "                                                  'train/cls_loss' : cls_loss.item(),\n",
-    "                                                  'train/cls_pos_loss' : cls_pos_loss_rec.item(),\n",
-    "                                                  'train/cls_neg_loss' : cls_neg_loss_rec.item()\n",
-    "                                                 }\n",
-    "                                  )\n",
-    "            log = {'loss': loss.average(),\n",
-    "               'cls_loss': cls_loss.average(),\n",
-    "               'reg_loss': reg_loss.average(),\n",
-    "               'cls_pos_loss': cls_pos_loss_rec.average(),\n",
-    "               'cls_neg_loss': cls_neg_loss_rec.average()\n",
-    "              }\n",
-    "                \n",
-    "        tot_val_loss += val_loss.item()\n",
-    "        tot_val_times += 1\n",
-    "        \n",
-    "        return log, tot_val_loss, tot_val_times\n",
-    "\n",
-    "    def _reset_metrics(self):\n",
-    "        self.batch_time = AverageMeter()\n",
-    "        self.data_time = AverageMeter()\n",
-    "        "
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.7.8"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 4
-}
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[ ]:
+
+
+import torch
+import time
+import numpy as np
+from torchvision.utils import make_grid
+from torchvision import transforms
+from base_trainer import *
+from tqdm import tqdm
+
+
+# In[ ]:
+
+
+class Trainer(BaseTrainer):
+    def __init__(self, model, resume, config, train_loader, val_loader=None, train_logger=None):
+        super(Trainer, self).__init__(model, resume, config, train_loader, val_loader, train_logger)
+        
+        self.wrt_mode, self.wrt_step = 'train_', 0
+        self.log_step = 10
+        torch.backends.cudnn.benchmark = True
+        
+    def _train_epoch(self, epoch):
+        self.logger.info('\n')
+            
+        self.model.train()
+        self.wrt_mode = 'train'
+        
+        tic = time.time()
+#         self._reset_metrics()
+
+        tbar = tqdm(self.train_loader, ncols=130)
+        for (i, data) in enumerate(tbar):
+            
+            self.optimizer.step()
+            self.lr_scheduler.step(epoch=epoch-1)
+            
+            # LOSS & OPTIMIZE
+            self.optimizer.zero_grad()
+            prob_output, delta_output, loss, cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec = self.model(data)
+            forward_time = time.time() - start_time
+            if isinstance(self.loss, torch.nn.DataParallel):
+                loss = loss.mean()
+                
+            self.optimizer.step()
+            loss.backward()
+            self.total_loss.update(loss.item())
+
+            # measure elapsed time
+            self.batch_time.update(time.time() - tic)
+            tic = time.time()
+
+            # LOGGING & TENSORBOARD
+            if batch_idx % self.log_step == 0:
+                self.wrt_step = (epoch - 1) * len(self.train_loader) + batch_idx
+                self.writer.add_scalar(f'{self.wrt_mode}/loss', loss.item(), self.wrt_step)
+
+            
+            # PRINT INFO
+            tbar.set_description('TRAIN ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(
+                                                epoch, loss, 
+                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec
+                                                self.forward_time.average, self.batch_time.average))
+
+#         # METRICS TO TENSORBOARD
+        self.writer.add_scalars(str(epoch+1), {'train/loss' : loss.item(),
+                                                  'train/reg_loss' : reg_loss.item(),
+                                                  'train/cls_loss' : cls_loss.item(),
+                                                  'train/cls_pos_loss' : cls_pos_loss_rec.item(),
+                                                  'train/cls_neg_loss' : cls_neg_loss_rec.item()
+                                                 }
+                                  )
+
+        # RETURN LOSS & METRICS
+        log = {'loss': loss.average(),
+               'cls_loss': cls_loss.average(),
+               'reg_loss': reg_loss.average(),
+               'cls_pos_loss': cls_pos_loss_rec.average(),
+               'cls_neg_loss': cls_neg_loss_rec.average()
+              }
+
+
+        return log
+
+    def _valid_epoch(self, epoch):
+        if self.val_loader is None:
+            self.logger.warning('Not data loader was passed for the validation step, No validation is performed !')
+            return {}
+        self.logger.info('\n###### EVALUATION ######')
+
+        self.model.eval()
+        self.wrt_mode = 'val'
+
+        self._reset_metrics()
+        tbar = tqdm(self.val_loader, ncols=130)
+        
+        with torch.no_grad():
+            val_visual = []
+            for (i, data) in enumerate(tbar):
+                
+                probs, deltas, val_loss, val_cls_loss, val_reg_loss, cls_pos_loss_rec, cls_neg_loss_rec = model(val_data)
+
+                if isinstance(self.loss, torch.nn.DataParallel):
+                    loss = loss.mean()
+
+                # PRINT INFO
+                tbar.set_description('EVAL ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(
+                                                epoch, loss, 
+                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec
+                                                self.forward_time.average, self.batch_time.average))
+
+            # WRTING & VISUALIZING THE MASKS
+            tags, ret_box3d_scores, ret_summary = model.module.predict(val_data, probs, deltas, summary = True)
+            for (tag, img) in ret_summary:
+                            img = img[0].transpose(2, 0, 1)
+                            self.writer.add_image(tag, img, global_counter)
+                        
+
+            # METRICS TO TENSORBOARD
+            self.writer.add_scalars(str(epoch+1), {'train/loss' : loss.item(),
+                                                  'train/reg_loss' : reg_loss.item(),
+                                                  'train/cls_loss' : cls_loss.item(),
+                                                  'train/cls_pos_loss' : cls_pos_loss_rec.item(),
+                                                  'train/cls_neg_loss' : cls_neg_loss_rec.item()
+                                                 }
+                                  )
+            log = {'loss': loss.average(),
+               'cls_loss': cls_loss.average(),
+               'reg_loss': reg_loss.average(),
+               'cls_pos_loss': cls_pos_loss_rec.average(),
+               'cls_neg_loss': cls_neg_loss_rec.average()
+              }
+                
+        tot_val_loss += val_loss.item()
+        tot_val_times += 1
+        
+        return log, tot_val_loss, tot_val_times
+
+    def _reset_metrics(self):
+        self.batch_time = AverageMeter()
+        self.data_time = AverageMeter()
+        
+
