@@ -31,9 +31,9 @@ from model.rpn import MiddleAndRpn
 # %%
 
 
-# from utils import *
-# from utils.colorize import colorize
-# from utils.nms import nms
+from utils.utils import *
+from utils.colorize import colorize
+from utils.nms import nms
 from config import cfg
 
 
@@ -71,18 +71,31 @@ class RPN3D(nn.Module):
         
         prob_output, delta_output = self.rpn(features)
         
-        pos_equal_one, neg_equal_one, targets = cal_rpn_target(self.label, self.rpn_output_shape, self.anchors, cls = cfg.DETECT_OBJ)
+        pos_equal_one, neg_equal_one, targets = cal_rpn_target(label, self.rpn_output_shape, self.anchors, cls = cfg.DETECT_OBJ)
         pos_equal_one_for_reg = np.concatenate([np.tile(pos_equal_one[..., [0]], 7), np.tile(pos_equal_one[..., [1]], 7)], axis=-1)
         pos_equal_one_sum = np.clip(np.sum(pos_equal_one, axis=(1, 2, 3)).reshape(-1, 1, 1, 1), a_min=1, a_max=None)
         neg_equal_one_sum = np.clip(np.sum(neg_equal_one, axis=(1, 2, 3)).reshape(-1, 1, 1, 1), a_min=1, a_max=None)
         
+        device = features.device
+        pos_equal_one = torch.from_numpy(pos_equal_one).to(device).float()
+        neg_equal_one = torch.from_numpy(neg_equal_one).to(device).float()
+        targets = torch.from_numpy(targets).to(device).float()
+        pos_equal_one_for_reg = torch.from_numpy(pos_equal_one_for_reg).to(device).float()
+        pos_equal_one_sum = torch.from_numpy(pos_equal_one_sum).to(device).float()
+        neg_equal_one_sum = torch.from_numpy(neg_equal_one_sum).to(device).float()
+        
+        pos_equal_one = pos_equal_one.permute(0, 3, 1, 2)
+        neg_equal_one = neg_equal_one.permute(0, 3, 1, 2)
+        targets = targets.permute(0, 3, 1, 2)
+        pos_equal_one_for_reg = pos_equal_one_for_reg.permute(0, 3, 1, 2)
+        
         cls_pos_loss = (-pos_equal_one * torch.log(prob_output + small_addon_for_BCE))/pos_equal_one_sum
-        cls_neg_loss = (-self.neg_equal_one * torch.log(1-prob_output + small_addon_for_BCE))/neg_equal_one_sum
-        cls_loss = torch.sum(alpha*cls_pos_loss + beta*cls_neg_loss)
+        cls_neg_loss = (-neg_equal_one * torch.log(1-prob_output + small_addon_for_BCE))/neg_equal_one_sum
+        cls_loss = torch.sum(self.alpha*cls_pos_loss + self.beta*cls_neg_loss)
         cls_pos_loss_rec = torch.sum(cls_pos_loss)
         cls_neg_loss_rec = torch.sum(cls_neg_loss)
         
-        reg_loss = smooth_l1(r_map * pos_equal_one_for_reg, targets * pos_equal_one_for_reg, sigma) / pos_equal_one_sum
+        reg_loss = smooth_l1(delta_output * pos_equal_one_for_reg, targets * pos_equal_one_for_reg, self.sigma) / pos_equal_one_sum
         
         reg_loss = torch.sum(reg_loss)
         loss = cls_loss + reg_loss
@@ -177,11 +190,11 @@ class RPN3D(nn.Module):
 def smooth_l1(deltas, targets, sigma = 3.0):
     
     sigma2 = sigma*sigma
-    diffs = torch.subtract(deltas, targets)
-    smooth_l1_signs = torch.less(torch.abs(diffs), 1.0/sigma2).float32
+    diffs = torch.sub(deltas, targets)
+    smooth_l1_signs = torch.lt(torch.abs(diffs), 1.0/sigma2).type('torch.FloatTensor').cuda()
     
     smooth_l1_option1 = torch.mul(diffs, diffs)*0.5*sigma2
-    smooth_l1_option2 = torch.abs(Diffs) - 0.5 / sigma2
+    smooth_l1_option2 = torch.abs(diffs) - 0.5 / sigma2
     smooth_l1_add = torch.mul(smooth_l1_option1, smooth_l1_signs) + torch.mul(smooth_l1_option2, 1-smooth_l1_signs)
     
     smooth_l1 = smooth_l1_add

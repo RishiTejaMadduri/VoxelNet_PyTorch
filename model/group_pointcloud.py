@@ -37,14 +37,13 @@ class VFELayer(nn.Module):
         self.dense = nn.Sequential(nn.Linear(self.in_channels, self.units),
                                    nn.ReLU()
                                    )
-        self.batch_norm = nn.BatchNorm2d(self.units)
+        self.batch_norm = nn.BatchNorm1d(self.units)
         
         
     def forward(self, inputs, mask):
         temp = self.dense(inputs).transpose(1,2)
         pointwise = self.batch_norm(temp).transpose(1,2)
-        
-        aggregated = torch.max(pointwise, dim=1, keep_dims=True)
+        aggregated, _ = torch.max(pointwise, dim = 1,keepdim=True)
         repeated = aggregated.expand(-1, cfg.VOXEL_POINT_COUNT, -1)
         concatenated = torch.cat([pointwise, repeated], dim = 2)
         mask = mask.expand(-1, -1, 2*self.units)
@@ -61,18 +60,18 @@ class FeatureNet(nn.Module):
         super(FeatureNet, self).__init__()
         
         self.vfe1 = VFELayer(7,32)
-        self.vfe2 = VFELayer(32,64)
+        self.vfe2 = VFELayer(32,128)
         
     def forward(self, feature, number, coordinate):
         batch_size = len(feature)
         feature = torch.cat(feature, dim=0)
         coordinate = torch.cat(coordinate, dim = 0)
-        vmax = torch.max(feature, dim=2, keepdim = True)
+        vmax, _ = torch.max(feature, dim=2, keepdim = True)
         mask = (vmax!=0)
         x = self.vfe1(feature, mask)
         x = self.vfe2(x, mask)
         
-        voxelwise = torch.max(x, dim = 1)
+        voxelwise, _ = torch.max(x, dim = 1)
         outputs = torch.sparse.FloatTensor(coordinate.t(), voxelwise, torch.Size([batch_size, cfg.INPUT_DEPTH, cfg.INPUT_HEIGHT, cfg.INPUT_WIDTH, 128]))
         outputs = outputs.to_dense()
         return outputs

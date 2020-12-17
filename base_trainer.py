@@ -13,10 +13,14 @@ import math
 import torch
 import datetime
 from torch.utils import tensorboard
-from utils_seg import logger
-import utils_seg.lr_scheduler
+from utils import logger
+import utils.lr_scheduler
+import pyximport
+pyximport.install()
 
-
+from config import cfg
+from utils.utils import box3d_to_label
+from utils import helpers
 # In[1]:
 
 
@@ -58,7 +62,7 @@ class BaseTrainer:
         self.optimizer = torch.optim.Adam(optim_params,
                                  betas=(self.config['optimizer']['args']['momentum'], 0.99),
                                  weight_decay=self.config['optimizer']['args']['weight_decay'])
-        self.lr_scheduler = getattr(utils_seg.lr_scheduler, config['lr_scheduler']['type'])(self.optimizer, self.epochs, len(train_loader))
+        self.lr_scheduler = getattr(utils.lr_scheduler, config['lr_scheduler']['type'])(self.optimizer, self.epochs, len(train_loader))
 
         # MONITORING
         self.monitor = cfg_trainer.get('monitor', 'off')
@@ -66,6 +70,7 @@ class BaseTrainer:
             self.mnt_mode = 'off'
             self.mnt_best = 0
         else:
+            print(self.monitor)
             self.mnt_mode, self.mnt_metric = self.monitor.split()
             assert self.mnt_mode in ['min', 'max']
             self.mnt_best = -math.inf if self.mnt_mode == 'max' else math.inf
@@ -79,16 +84,14 @@ class BaseTrainer:
         with open(config_save_path, 'w') as handle:
             json.dump(self.config, handle, indent=4, sort_keys=True)
             
-        writepath = "change_this"
+        writepath = "/home/rtmdisp/VoxelNet_PyTorch/saved/"
         writer_dir = str(writepath + '/' + self.config['name'] + '/' + start_time)
-        print(writer_dir)
-#         writer_dir = os.path.join(cfg_trainer['log_dir'], self.config['name'], start_time)
-        if os.path.isdir(writer_dir):
-            self.writer = tensorboard.SummaryWriter(writer_dir)
-        else:
-            print("set logdir properly")
-            print(writer_dir)
-            exit()
+#         if os.path.isdir(writer_dir):
+#             self.writer = tensorboard.SummaryWriter(writer_dir)
+#         else:
+#             print("set logdir properly")
+#             print(writer_dir)
+#             exit()
 #         import pdb; pdb.set_trace()
         self.writer = tensorboard.SummaryWriter(writer_dir)
 
@@ -154,7 +157,7 @@ class BaseTrainer:
         state = {
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
-            'min_loss': min_loss
+            'min_loss': min_loss,
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best,
             'config': self.config

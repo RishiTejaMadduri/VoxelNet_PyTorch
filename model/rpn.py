@@ -8,7 +8,7 @@ import sys
 import torch
 import numpy as np
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 # In[5]:
 
@@ -32,8 +32,8 @@ small_addon_for_BCE = 1e-6
 
 
 class ConvMD(nn.Module):
-    def __init__(M, cin, cout, kernel, stride, padding, bn=True, activation = True):
-        super(ConvMD, slef).__init__()
+    def __init__(self, M, cin, cout, kernel, stride, padding, bn=True, activation = True):
+        super(ConvMD, self).__init__()
         self.M = M
         self.cin = cin
         self.cout = cout
@@ -42,13 +42,13 @@ class ConvMD(nn.Module):
         self.padding = padding
         self.bn = bn
         self.activation = activation
-        
+
         if self.M == 2:
             self.conv = nn.Conv2d(self.cin, self.cout, self.kernel, self.stride, self.padding)
             if bn == True:
                 self.batch_norm = nn.BatchNorm2d(self.cout)
                 
-        if self.M == 3:
+        elif self.M == 3:
             self.conv = nn.Conv3d(self.cin, self.cout, self.kernel, self.stride, self.padding)
             if bn == True : 
                 self.batch_norm = nn.BatchNorm3d(self.cout)
@@ -76,6 +76,7 @@ class ConvMD(nn.Module):
 
 
 class Deconv2D(nn.Module):
+    
     def __init__(self, cin, cout, kernel, stride, padding, bn=True):
         super(Deconv2D, self).__init__()
     
@@ -84,16 +85,17 @@ class Deconv2D(nn.Module):
         self.kernel = kernel
         self.stride = stride
         self.padding = padding
+        self.bn = bn
 
-        self.deconv = nn.ConvTranspose2d(self.cin, self.cout, self.kernel, self.stide, self.padding)
+        self.deconv = nn.ConvTranspose2d(self.cin, self.cout, self.kernel, self.stride, self.padding)
     
         if self.bn:
             self.batch_norm = nn.BatchNorm2d(self.cout)
         
     def forward(self, inputs):
-        out = self.deconv(out)
+        out = self.deconv(inputs)
         
-        if bn:
+        if self.bn:
             out = self.batch_norm(out)
         
         return F.relu(out)
@@ -105,7 +107,7 @@ class Deconv2D(nn.Module):
 
 class MiddleAndRpn(nn.Module):
     def __init__(self, alpha = 1.5, beta = 1, sigma = 3):
-        super(MiddleAndRPN, self).__init__()
+        super(MiddleAndRpn, self).__init__()
     
         self.middle_layer = nn.Sequential(ConvMD(3, 128, 64, 3, (2,1,1), (1,1,1)),
                                    ConvMD(3, 64, 64, 3, (1,1,1), (0,1,1)),
@@ -129,7 +131,7 @@ class MiddleAndRpn(nn.Module):
                                        ConvMD(2, 128, 128, 3, (1,1), (1,1))
                                         )
 
-        self.deconv1 = Decon2D(128, 256, 3, (1,1), (1,1))
+        self.deconv1 = Deconv2D(128, 256, 3, (1,1), (1,1))
 
 
         self.conv2 = nn.Sequential(ConvMD(2, 128, 128, 3, (2,2), (1,1)),
@@ -139,7 +141,7 @@ class MiddleAndRpn(nn.Module):
                                    ConvMD(2, 128, 128, 3, (1,1), (1,1))
                                 )
 
-        self.deconv2 = Deconv2D(128, 256, 3, (2,2), (0,0))
+        self.deconv2 = Deconv2D(128, 256, 2, (2,2), (0,0))
 
         self.conv3 = nn.Sequential(ConvMD(2, 128, 256, 3, (2,2), (1,1)),
                                    ConvMD(2, 256, 256, 3, (1,1), (1,1)),
@@ -154,18 +156,22 @@ class MiddleAndRpn(nn.Module):
         
     
     def forward(self, x):
-        [batch_size, depth, height, width] = x.shape
-        x = x.permute(x,(0,4,1,2,3))
-        
+        [batch_size, depth, height, width, P] = x.shape
+        x = x.permute(0,4,1,2,3)
+#         print("x", x.shape)
         x = self.middle_layer(x)
         x = x.view(batch_size, -1, height, width)
+        
         x = self.conv1(x)
         x_deconv1 = self.deconv1(x)
+#         print("x_deconv1", x_deconv1.shape)
         x = self.conv2(x)
         x_deconv2 = self.deconv2(x)
+#         print("x_deconv2", x_deconv2.shape)
         x = self.conv3(x)
         x_deconv3 = self.deconv3(x)
-        x = torch.cat([deconv3, deconv2, deconv1], dim = 1)
+#         print("x_deconv3", x_deconv3.shape)
+        x = torch.cat([x_deconv3, x_deconv2, x_deconv1], dim = 1)
         
         p_map = self.prob_conv(x)
         r_map = self.reg_conv(x)

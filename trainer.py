@@ -10,6 +10,7 @@ import numpy as np
 from torchvision.utils import make_grid
 from torchvision import transforms
 from base_trainer import *
+from utils.metrics import AverageMeter
 from tqdm import tqdm
 
 
@@ -31,7 +32,7 @@ class Trainer(BaseTrainer):
         self.wrt_mode = 'train'
         
         tic = time.time()
-#         self._reset_metrics()
+        self._reset_metrics()
 
         tbar = tqdm(self.train_loader, ncols=130)
         for (i, data) in enumerate(tbar):
@@ -42,29 +43,26 @@ class Trainer(BaseTrainer):
             # LOSS & OPTIMIZE
             self.optimizer.zero_grad()
             prob_output, delta_output, loss, cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec = self.model(data)
-            forward_time = time.time() - start_time
-            if isinstance(self.loss, torch.nn.DataParallel):
-                loss = loss.mean()
-                
+
             self.optimizer.step()
             loss.backward()
-            self.total_loss.update(loss.item())
+
 
             # measure elapsed time
             self.batch_time.update(time.time() - tic)
             tic = time.time()
 
             # LOGGING & TENSORBOARD
-            if batch_idx % self.log_step == 0:
-                self.wrt_step = (epoch - 1) * len(self.train_loader) + batch_idx
+            if i % self.log_step == 0:
+                self.wrt_step = (epoch - 1) * len(self.train_loader) + i
                 self.writer.add_scalar(f'{self.wrt_mode}/loss', loss.item(), self.wrt_step)
 
             
             # PRINT INFO
-            tbar.set_description('TRAIN ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(
+            tbar.set_description('TRAIN ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | batch_time {:.2f} |'.format(
                                                 epoch, loss, 
-                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec
-                                                self.forward_time.average, self.batch_time.average))
+                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec,
+                                                self.batch_time.average))
 
 #         # METRICS TO TENSORBOARD
         self.writer.add_scalars(str(epoch+1), {'train/loss' : loss.item(),
@@ -110,8 +108,8 @@ class Trainer(BaseTrainer):
                 # PRINT INFO
                 tbar.set_description('EVAL ({}) | Loss: {:.3f} | cls_loss {:.2f} | reg_loss {:.2f} | cls_pos_loss {:.2f} | cls_neg_loss {:.2f} | forward_time {:.2f} | batch_time {:.2f} |'.format(
                                                 epoch, loss, 
-                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec
-                                                self.forward_time.average, self.batch_time.average))
+                                                cls_loss, reg_loss, cls_pos_loss_rec, cls_neg_loss_rec,
+                                                forward_time.average, self.batch_time.average))
 
             # WRTING & VISUALIZING THE MASKS
             tags, ret_box3d_scores, ret_summary = model.module.predict(val_data, probs, deltas, summary = True)

@@ -10,7 +10,7 @@ import pyximport
 pyximport.install()
 
 from config import cfg
-# from utils.box_overlaps import *
+from utils.box_overlaps import *
 
 import pdb
 
@@ -616,7 +616,7 @@ def cal_rpn_target(labels, feature_map_shape, anchors, cls = 'Car', coordinate =
             np.ascontiguousarray(anchors_standup_2d).astype(np.float32),
             np.ascontiguousarray(gt_standup_2d).astype(np.float32),
         )
-        # iou = cal_box3d_iou(anchors_reshaped, batch_gt_boxes3d[batch_id])
+#         iou = cal_box3d_iou(anchors_reshaped, batch_gt_boxes3d[batch_id])
 
         # Find anchor with highest iou (iou should also > 0)
         id_highest = np.argmax(iou.T, axis = 1)

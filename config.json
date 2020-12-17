@@ -61,17 +61,17 @@
 
     "trainer": {
         "epochs": 80,
-        "save_dir": "/mnt/batch/tasks/shared/LS_root/mounts/clusters/pyfuse/code/pytorch_segmentation/saved/",
+        "save_dir": "/home/rtmdisp/VoxelNet_PyTorch/saved/",
         "save_period": 10,
   
-        "monitor": "min_loss",
+        "monitor": "min min_loss",
         "early_stop": 10,
         
         "tensorboard": true,
         "log_dir": "saved/runs",
-        "log_per_iter": 20,
+        "log_per_iter": 1,
 
         "val": true,
-        "val_per_epochs": 5
+        "val_per_epochs": 1
     }
 }

@@ -79,20 +79,20 @@ class KITTI_Loader():
         self.f_lidar.sort()
         self.f_label.sort()
         
-        self.data_tag = [name.split('/')[-1].split('.')[-2] for name in f_rgb]
+        self.data_tag = [name.split('/')[-1].split('.')[-2] for name in self.f_rgb]
         
-        assert len(data_tag) != 0, "dataset folder is not correct"
-        assert len(data_tag) == len(f_rgb) == len(f_lidar) , "dataset folder is not correct"
+        assert len(self.data_tag) != 0, "dataset folder is not correct"
+        assert len(self.data_tag) == len(self.f_rgb) == len(self.f_lidar) , "dataset folder is not correct"
         
         
-        nums = len(f_rgb)
-        indices = list(range(nums))
+        nums = len(self.f_rgb)
+        self.indices = list(range(nums))
         if shuffle:
-            np.random.shuffle(indices)
+            np.random.shuffle(self.indices)
 
-        num_batches = int(math.floor( nums / float(batch_size) ))
+#         num_batches = int(math.floor( nums / float(batch_size) ))
 
-        proc=Processor(data_tag, f_rgb, f_lidar, f_label, data_dir, aug, is_testset)
+        self.proc=Processor(self.data_tag, self.f_rgb, self.f_lidar, self.f_label, self.data_dir, self.aug, self.is_testset)
         
     def __getitem__(self, index):
         # A list of [tag, rgb, raw_lidar, voxel, labels]
@@ -123,15 +123,14 @@ def collate_fn(rets):
     res = (
            np.array(tag),
            np.array(labels),
-           np.array(vox_feature),
+           [torch.from_numpy(x) for x in vox_feature],
            np.array(vox_number),
-           np.array(vox_coordinate),
+           [torch.from_numpy(x) for x in vox_coordinate],
            np.array(rgb),
            np.array(raw_lidar)
            )
 
-    return ret
-
+    return res
 
 # %%
 
@@ -149,7 +148,7 @@ def build_input(voxel_dict_list):
         coordinate = voxel_dict['coordinate_buffer']
         coordinate_list.append(np.pad(coordinate, ((0, 0), (1, 0)), mode='constant', constant_values=i))
 
-    return batch_size, feature, number, coordinate
+    return batch_size, feature_list, number_list, coordinate_list
 
 
 # %%
