@@ -2,10 +2,6 @@ import torch
 
 import pdb
 
-# Original author: Francisco Massa:
-# https://github.com/fmassa/object-detection.torch
-# Ported to PyTorch by Max deGroot (02/01/2017)
-
 def nms(boxes, scores, overlap = 0.5, top_k = 200):
     """Apply non-maximum suppression at test time to avoid detecting too many
     overlapping bounding boxes for a given object.

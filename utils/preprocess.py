@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 # -*- coding:UTF-8 -*-
 
-# File Name : preprocess.py
-# Purpose :
-# Creation Date : 10-12-2017
-# Last Modified : Thu 18 Jan 2018 05:34:42 PM CST
-# Created By : Jeasine Ma [jeasinema[at]gmail[dot]com]
-
 import numpy as np
 
 from config import cfg
