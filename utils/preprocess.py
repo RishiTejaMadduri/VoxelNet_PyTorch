@@ -71,9 +71,11 @@ def process_pointcloud(point_cloud, cls = cfg.DETECT_OBJ):
     feature_buffer[:, :, -3:] = feature_buffer[:, :, :3] - \
         feature_buffer[:, :, :3].sum(axis = 1, keepdims = True)/number_buffer.reshape(K, 1, 1)
 
-    voxel_dict = {'feature_buffer': feature_buffer,
-                  'coordinate_buffer': coordinate_buffer,
-                  'number_buffer': number_buffer}
+#     voxel_dict = {'feature_buffer': feature_buffer,
+#                   'coordinate_buffer': coordinate_buffer,
+#                   'number_buffer': number_buffer}
+    
+    voxel_dict = [feature_buffer, coordinate_buffer, number_buffer]
 
     return voxel_dict
 
